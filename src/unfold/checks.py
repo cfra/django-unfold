@@ -4,6 +4,7 @@ from django.contrib.admin.checks import ModelAdminChecks
 from django.contrib.admin.options import BaseModelAdmin
 from django.contrib.auth.models import Permission
 from django.core import checks
+from django.db.utils import DatabaseError
 
 from unfold.dataclasses import UnfoldAction
 
@@ -36,17 +37,27 @@ class UnfoldModelAdminChecks(ModelAdminChecks):
                 if "." in permission:
                     app_label, codename = permission.split(".")
 
-                    if not Permission.objects.filter(
-                        content_type__app_label=app_label,
-                        codename=codename,
-                    ).exists():
-                        errors.append(
-                            checks.Error(
-                                f"@action decorator on {action.method.original_function_name}() in class {obj.__class__.__name__} specifies permission {permission} which does not exists.",
-                                obj=obj.__class__,
-                                id="admin.E129",
+                    try:
+                        if not Permission.objects.filter(
+                            content_type__app_label=app_label,
+                            codename=codename,
+                        ).exists():
+                            errors.append(
+                                checks.Error(
+                                    f"@action decorator on {action.method.original_function_name}() in class {obj.__class__.__name__} specifies permission {permission} which does not exists.",
+                                    obj=obj.__class__,
+                                    id="admin.E129",
+                                )
                             )
-                        )
+                    except DatabaseError:
+                        # For new projects, the check is run before migrations are executed.
+                        # As the Permissions table has not been initialized yet at that time,
+                        # the Permission lookup will fail, making it impossible to run the
+                        # migration.
+                        # Work around this by ignoring errors when talking to the database and
+                        # only adding check errors if we can positively determine a permission
+                        # is missing.
+                        pass
 
                     continue
 
